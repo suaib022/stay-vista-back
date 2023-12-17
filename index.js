@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const cookieParser = require('cookie-parser')
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = 5000;
 require('dotenv').config();
@@ -13,14 +13,35 @@ app.use(cors({
     credentials: true,
 }));
 app.use(express.json());
+app.use(cookieParser());
 
 app.get('/', (req, res) => {
     res.send('hello world');
 })
 
 app.listen(port, () => {
-    console.log(`Clean-Co-Server is running on port : ${port}`)
+    console.log(`Stay-Vista is running on port : ${port}`)
 })
+
+// verify user / token
+const verifyToken = async (req, res, next) => {
+    const token = req?.cookies?.token;
+    console.log('received token', token);
+
+    if (!token) {
+        console.log('no token found');
+        return res.status(401).send({ message: 'UnAuthorized User' });
+    }
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+        if (err) {
+            console.log('token verification failed', err);
+            return res.status(403).send({ message: 'Forbidden Access' })
+        }
+        req.user = decoded;
+        console.log('token verified :', decoded);
+        next();
+    })
+}
 
 
 
@@ -40,12 +61,13 @@ async function run() {
     try {
 
         const usersCollection = client.db('stayVistaDb').collection('users');
+        const roomsCollection = client.db('stayVistaDb').collection('rooms');
 
         // Connect the client to the server	(optional starting in v4.7)
         await client.connect();
 
         // create token
-        app.post('/jwt', async(req, res) => {
+        app.post('/jwt', async (req, res) => {
             const user = req.body;
             const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
                 expiresIn: '365d',
@@ -55,7 +77,7 @@ async function run() {
                 secure: process.env.NODE_ENV === 'production',
                 sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
             })
-            .send({success: true})
+                .send({ success: true })
         });
 
         // save user info in db
@@ -80,18 +102,51 @@ async function run() {
         })
 
         // clear cookie after logOut
-        app.get('/logOut', async(req, res) => {
-            try{
+        app.get('/logOut', async (req, res) => {
+            try {
                 res.clearCookie('token', {
                     maxAge: 0,
                     secure: process.env.NODE_ENV === 'production',
                     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
                 })
-                .send({success: true})
+                    .send({ success: true })
             }
-            catch(err){
+            catch (err) {
                 res.status(500).send(err)
             }
+        })
+
+        // rooms related api
+        app.get('/rooms', async (req, res) => {
+            const result = await roomsCollection.find().toArray();
+            res.send(result);
+        })
+
+        app.get('/room/:id', async (req, res) => {
+            const id = req.params.id;
+            const result = await roomsCollection.findOne({ _id: new ObjectId(id) });
+            res.send(result);
+        })
+
+        app.post('/rooms', verifyToken, async (req, res) => {
+            const room = req.body;
+            const result = await roomsCollection.insertOne(room);
+            res.send(result);
+        })
+
+        app.get('/rooms/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            const result = await roomsCollection.find({ 'host.email': email }).toArray();
+            res.send(result);
+        })
+
+
+        // user related api
+        // get user role
+        app.get('/user/:email', async(req, res) => {
+            const email = req.params.email;
+            const result = await usersCollection.findOne({email});
+            res.send(result);
         })
 
 
